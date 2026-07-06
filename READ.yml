@@ -1,0 +1,55 @@
+name: Build Redwood Kernel with KernelSU-Next
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Install Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev clang lld
+
+      - name: Clone Kernel Source
+        run: |
+          git clone --depth 1 -b redwood-s-oss https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git kernel
+          git clone --depth 1 -b redwood-s-oss https://github.com/MiCode/kernel_devicetree.git kernel/devicetree
+          git clone --depth 1 -b redwood-s-oss https://github.com/MiCode/vendor_qcom_opensource_wlan.git kernel/wlan
+          git clone --depth 1 -b redwood-s-oss https://github.com/MiCode/kernel_build.git kernel/build
+
+      - name: Integrate KernelSU-Next
+        run: |
+          cd kernel
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
+
+      - name: Merge Config Fragment
+        run: |
+          cd kernel
+          export ARCH=arm64
+          echo "CONFIG_KSU=y" >> arch/arm64/configs/vendor/redwood_QGKI.config
+          scripts/kconfig/merge_config.sh -m arch/arm64/configs/gki_defconfig arch/arm64/configs/vendor/redwood_QGKI.config
+          mv .config arch/arm64/configs/redwood_merged_defconfig
+
+      - name: Attempt Build
+        run: |
+          cd kernel
+          export ARCH=arm64
+          make O=out redwood_merged_defconfig || echo "DEFCONFIG_FAILED"
+          make O=out -j$(nproc) 2>&1 | tee build_log.txt || echo "BUILD_FAILED"
+
+      - name: Upload Build Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: kernel/build_log.txt
+
+      - name: Upload Kernel Image
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-image-ksu-next
+          path: kernel/out/arch/arm64/boot/Image.gz-dtb
+          if-no-files-found: ignore
